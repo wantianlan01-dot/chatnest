@@ -165,7 +165,7 @@ async def stream_chat(
             "model": model,
             "messages": [{"role": "system", "content": system_prompt}] + history,
             "stream": True,
-            "max_tokens": 16384,
+            "max_tokens": 8192,
         }
 
         headers = _get_headers()
@@ -178,6 +178,9 @@ async def stream_chat(
                 resp = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
                 if resp.status_code >= 400:
                     raise RuntimeError(f"OpenRouter API error ({resp.status_code}): {resp.text[:300]}")
+                body_text = resp.text
+                if not body_text.strip():
+                    raise RuntimeError(f"Empty body from OpenRouter (status {resp.status_code})")
                 data = resp.json()
                 full_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                 if full_text:
