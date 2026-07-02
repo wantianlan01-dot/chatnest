@@ -750,28 +750,21 @@ async def test_openrouter():
 
 @app.get("/api/test-chat")
 async def test_chat():
-    """Minimal test - just call OpenRouter directly, no system prompt."""
-    import httpx, os
+    """Call stream_chat just like the real chat does."""
+    from app.claude import stream_chat, available_models
+    import json
+    
+    model = available_models()[0]["id"]
     try:
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
-        payload = {
-            "model": "anthropic/claude-sonnet-4.6",
-            "messages": [{"role": "user", "content": "Say hi in 3 words"}],
-            "max_tokens": 100,
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            )
-            return {
-                "status": resp.status_code,
-                "body_preview": resp.text[:300] if resp.text else "(empty)",
-                "ok": resp.status_code < 400
-            }
+        events = []
+        async for event in stream_chat("Say hi in 3 words", "test-conv-123", model=model, max_context_count=5):
+            events.append(event)
+            if event.get("event") == "done":
+                break
+        return {"ok": True, "model": model, "events": events}
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:500]}"}
+        import traceback
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:500]}", "trace": traceback.format_exc()[:500]}
 
 @app.get("/api/splash")
 async def splash() -> dict:
