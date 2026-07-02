@@ -726,6 +726,27 @@ async def get_diary() -> dict:
     return {"entries": entries}
 
 
+
+@app.get("/api/test-or")
+async def test_openrouter():
+    """Test if OpenRouter API is reachable from Render."""
+    import httpx, os
+    try:
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            return {"ok": False, "error": "ANTHROPIC_API_KEY not set", "env_keys": list(os.environ.keys())[:10]}
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                json={"model": "anthropic/claude-sonnet-4.6", "messages": [{"role": "user", "content": "Say hi"}], "max_tokens": 10},
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            )
+            if r.status_code >= 400:
+                return {"ok": False, "status": r.status_code, "body": r.text[:500]}
+            return {"ok": True, "status": r.status_code, "reply": r.json().get("choices", [{}])[0].get("message",{}).get("content","")[:100]}
+    except Exception as e:
+        return {"ok": False, "error": type(e).__name__ + ": " + str(e)[:300]}
+
 @app.get("/api/splash")
 async def splash() -> dict:
     period = current_period()
