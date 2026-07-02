@@ -144,21 +144,38 @@ async def stream_chat(
     timing_callback: Callable[[str], None] | None = None,
     max_context_count: int | None = None,
 ) -> AsyncGenerator[dict, None]:
-    """Added back system prompt - now with system_prompt."""
+    """Complete stream_chat with system prompt, history, and registry."""
+    from app.registry import get_registry
+    
+    model_config = next(
+        (item for item in available_models() if item["id"] == model),
+        None,
+    )
+    if model_config is None:
+        raise ValueError("unsupported model")
+    
+    await get_registry().assert_available()
+    get_registry().set_busy(True)
     session_id_str = f"or-{uuid4().hex[:12]}"
     
-    # Build system prompt
     try:
-        system_prompt = await build_system_prompt(message, model)
-    except Exception:
-        system_prompt = "You are a helpful assistant."
-    
-    payload = {
-        "model": model,
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": message}],
-        "max_tokens": 4096,
-    }
-    try:
+        # Build system prompt
+        try:
+            system_prompt = await build_system_prompt(message, model)
+        except Exception:
+            system_prompt = "You are a helpful assistant."
+        
+        # Build conversation history
+        history = _build_history(conv_id, limit=max_context_count)
+        if not history or history[-1].get("content") != message:
+            history.append({"role": "user", "content": message})
+        
+        payload = {
+            "model": model,
+            "messages": [{"role": "system", "content": system_prompt}] + history,
+            "max_tokens": 4096,
+        }
+        
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
             if resp.status_code >= 400:
@@ -173,6 +190,8 @@ async def stream_chat(
         yield {"event": "done", "session_id": session_id_str}
     except Exception as e:
         raise RuntimeError(f"OpenRouter request failed: {e}")
+    finally:
+        get_registry().set_busy(False)
 
 
 async def summarize_thinking(thinking: str) -> str:
