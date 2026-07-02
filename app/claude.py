@@ -162,12 +162,10 @@ async def stream_chat(
         session_id_str = f"or-{uuid4().hex[:12]}"
         payload = {
             "model": model,
-            "messages": [{"role": "system", "content": system_prompt}] + history if model.startswith("anthropic/") else history,
+            "messages": [{"role": "system", "content": system_prompt}] + history,
             "stream": True,
             "max_tokens": 16384,
         }
-        if not model.startswith("anthropic/"):
-            payload["messages"] = [{"role": "system", "content": system_prompt}] + history
 
         headers = _get_headers()
         if timing_callback:
