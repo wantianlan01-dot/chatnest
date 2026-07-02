@@ -38,7 +38,7 @@ class SessionResumeError(RuntimeError):
 
 
 def available_models() -> list[dict]:
-    models = json.loads(MODELS_PATH.read_text(encoding="utf-8"))
+    models = json.loads(MODELS_PATH.read_text(encoding="utf-8-sig"))
     return [
         {
             "id": str(item["id"]),

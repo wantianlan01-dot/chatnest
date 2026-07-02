@@ -1,4 +1,4 @@
-﻿[
+[
   { "id": "anthropic/claude-sonnet-4-20250514",             "label": "Sonnet 4",      "desc": "Best balance - Sonnet 4",                     "thinking": "adaptive", "primary": true  },
   { "id": "anthropic/claude-opus-4-20250514",               "label": "Opus 4",        "desc": "Most capable - Opus 4.6",                    "thinking": "adaptive", "primary": true  },
   { "id": "anthropic/claude-3-5-haiku-20241022",            "label": "Haiku 3.5",     "desc": "Fastest for quick answers",                   "thinking": "none",     "primary": true  },

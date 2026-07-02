@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -23,7 +23,7 @@ def current_period() -> str:
 
 def read_pool() -> dict[str, list[str]]:
     try:
-        data = json.loads(POOL_PATH.read_text(encoding="utf-8"))
+        data = json.loads(POOL_PATH.read_text(encoding="utf-8-sig"))
         return {
             key: [str(line) for line in data.get(key, []) if str(line).strip()]
             for key in ("morning", "afternoon", "evening", "latenight")
