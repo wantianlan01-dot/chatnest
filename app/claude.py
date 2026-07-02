@@ -174,6 +174,10 @@ async def stream_chat(
         first_text = False
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream("POST", OPENROUTER_URL, json=payload, headers=headers) as resp:
+                if resp.status_code >= 400:
+                    error_body = await resp.aread()
+                    detail = error_body.decode("utf-8", errors="replace")[:500]
+                    raise RuntimeError(f"OpenRouter API error ({resp.status_code}): {detail}")
                 if timing_callback:
                     timing_callback("stream_started")
                 async for raw_line in resp.aiter_lines():
