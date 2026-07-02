@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import httpx
 import os
 import urllib.error
 import urllib.request
@@ -10,7 +11,6 @@ from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from uuid import uuid4
 
-import anthropic
 
 from app.actor import ActorBusyError
 from app.memory import build_profile_context, read_memory
@@ -67,11 +67,14 @@ def thinking_options(
     return {"type": "disabled"}, selected
 
 
-def _get_client() -> anthropic.AsyncAnthropic:
-    """Create an Anthropic API client with optional custom base URL (for OpenRouter)."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-    return anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def _get_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {os.environ.get("ANTHROPIC_API_KEY", "")}",
+        "Content-Type": "application/json",
+    }
 
 
 async def fetch_memory_hits(query: str) -> str:
@@ -134,10 +137,11 @@ async def stream_chat(
     message: str,
     conv_id: str,
     session_id: str | None = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "anthropic/claude-sonnet-4-20250514",
     effort: str = "medium",
     extended: bool = True,
     timing_callback: Callable[[str], None] | None = None,
+    max_context_count: int | None = None,
 ) -> AsyncGenerator[dict, None]:
     model_config = next(
         (item for item in available_models() if item["id"] == model),
@@ -150,137 +154,109 @@ async def stream_chat(
     try:
         get_registry().set_busy(True)
 
-        thinking_cfg, selected_effort = thinking_options(model_config, effort, extended)
         system_prompt = await build_system_prompt(message, model)
         history = _build_history(conv_id, limit=max_context_count)
         if not history or history[-1].get("content") != message:
             history.append({"role": "user", "content": message})
 
-        kwargs: dict = {
+        session_id_str = f"or-{uuid4().hex[:12]}"
+        payload = {
             "model": model,
-            "system": system_prompt,
-            "messages": history,
+            "messages": [{"role": "system", "content": system_prompt}] + history if model.startswith("anthropic/") else history,
+            "stream": True,
             "max_tokens": 16384,
         }
-        if thinking_cfg.get("type") == "enabled":
-            kwargs["thinking"] = thinking_cfg
-            budget = thinking_cfg.get("budget_tokens", 8000)
-            kwargs["max_tokens"] = max(16384, budget + 8192)
+        if not model.startswith("anthropic/"):
+            payload["messages"] = [{"role": "system", "content": system_prompt}] + history
 
-        client = _get_client()
+        headers = _get_headers()
+        if timing_callback:
+            timing_callback("sdk_first_event")
+
         first_text = False
-        session_id_str = f"api-{uuid4().hex[:12]}"
-
-        try:
-            if timing_callback:
-                timing_callback("sdk_first_event")
-
-            async with client.messages.stream(**kwargs) as stream:
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", OPENROUTER_URL, json=payload, headers=headers) as resp:
                 if timing_callback:
                     timing_callback("stream_started")
-                async for event in stream:
-                    if event.type == "content_block_delta":
-                        delta = event.delta
-                        if delta.type == "thinking_delta":
-                            yield {"event": "thinking", "text": delta.thinking}
-                        elif delta.type == "text_delta":
+                async for raw_line in resp.aiter_lines():
+                    if not raw_line.startswith("data: "):
+                        continue
+                    data_str = raw_line[6:].strip()
+                    if data_str == "[DONE]":
+                        yield {"event": "done", "session_id": session_id_str}
+                        return
+                    try:
+                        jd = json.loads(data_str)
+                        delta = jd.get("choices", [{}])[0].get("delta", {})
+                        if delta.get("content"):
                             if not first_text:
                                 first_text = True
                                 if timing_callback:
                                     timing_callback("first_text_token")
-                            yield {"event": "delta", "text": delta.text}
-            yield {"event": "done", "session_id": session_id_str}
-        finally:
-            await client.close()
+                            yield {"event": "delta", "text": delta["content"]}
+                    except json.JSONDecodeError:
+                        pass
     finally:
         get_registry().set_busy(False)
-
-
 async def summarize_thinking(thinking: str) -> str:
-    """Summarize thinking content using a cheap model."""
+    """Summarize thinking content via OpenRouter."""
     logger = logging.getLogger(__name__)
     async with _haiku_sem:
-        client = _get_client()
         try:
-            response = await client.messages.create(
-                model="claude-sonnet-4-20250514",
-                system=SUMMARY_PROMPT,
-                messages=[{"role": "user", "content": thinking[:8000]}],
-                max_tokens=100,
-            )
-            summary = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    summary += block.text
-            summary = summary.strip().strip("\"'\u201c\u201d")
-            logger.info("thinking_summary raw=%r truncated=%r", thinking[:100], summary[:40])
+            payload = {
+                "model": "anthropic/claude-3-5-haiku-20241022",
+                "messages": [
+                    {"role": "system", "content": SUMMARY_PROMPT},
+                    {"role": "user", "content": thinking[:8000]}
+                ],
+                "max_tokens": 100,
+            }
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
+                data = r.json()
+                summary = data["choices"][0]["message"]["content"].strip()
+            logger.info("thinking_summary truncated=%r", summary[:40])
             return summary[:40] if summary else ""
         except Exception as e:
             logger.exception("thinking summary failed: %s", e)
             return ""
-        finally:
-            await client.close()
-
-
-TRACE_SUMMARY_PROMPT = "你是一个中文摘要工具。输出一句不超过15字的中文概括。动词短语开头，写出目的而非动作本身，不要引号。只输出摘要本身。" 
-
-
 async def summarize_traces(traces: list[dict]) -> str:
-    """Summarize tool traces using a cheap model."""
-    tool_results = {
-        t.get("tool_use_id"): t
-        for t in traces
-        if t.get("type") == "tool_result"
-    }
+    """Summarize tool traces via OpenRouter."""
+    tool_results = {t.get("tool_use_id"): t for t in traces if t.get("type") == "tool_result"}
     parts = []
     for t in traces:
         if t.get("type") != "tool_use":
             continue
         result = tool_results.get(t.get("id"), {})
         try:
-            input_str = (
-                t.get("input", "")
-                if isinstance(t.get("input"), str)
-                else json.dumps(t.get("input", {}), ensure_ascii=False)
-            )
+            input_str = t.get("input", "") if isinstance(t.get("input"), str) else json.dumps(t.get("input", {}), ensure_ascii=False)
         except Exception:
             input_str = str(t.get("input", ""))
         output_str = (result.get("content") or "")[:300]
-        parts.append(
-            f"工具: {t.get('name', 'tool')}\n"
-            f"输入: {input_str[:200]}\n"
-            f"输出: {output_str}"
-        )
+        parts.append(f"工具: {t.get("name", "tool")}\n输入: {input_str[:200]}\n输出: {output_str}")
     if not parts:
         return ""
     prompt = "\n---\n".join(parts)
     async with _haiku_sem:
-        client = _get_client()
         try:
-            response = await client.messages.create(
-                model="claude-sonnet-4-20250514",
-                system=TRACE_SUMMARY_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-            )
-            summary = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    summary += block.text
-            summary = summary.strip()
-            for ch in ['"', "'", "\u201c", "\u201d", "\u3002", ".", "\uff0c", ","]:
+            payload = {
+                "model": "anthropic/claude-3-5-haiku-20241022",
+                "messages": [{"role": "system", "content": TRACE_SUMMARY_PROMPT}, {"role": "user", "content": prompt}],
+                "max_tokens": 50,
+            }
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
+                data = r.json()
+                summary = data["choices"][0]["message"]["content"].strip()
+            for ch in ["\"", "'", "\u201c", "\u201d", "\u3002", ".", "\uff0c", ","]:
                 summary = summary.strip(ch)
             return summary[:30] if summary else ""
         except Exception:
             logger = logging.getLogger(__name__)
             logger.exception("trace summary failed")
             return ""
-        finally:
-            await client.close()
-
-
 async def summarize_tool_use(tool_name: str, tool_input, tool_output: str) -> str:
-    """Summarize a single tool use using a cheap model."""
+    """Summarize a single tool use via OpenRouter."""
     try:
         input_str = tool_input if isinstance(tool_input, str) else json.dumps(tool_input, ensure_ascii=False)
     except Exception:
@@ -288,31 +264,23 @@ async def summarize_tool_use(tool_name: str, tool_input, tool_output: str) -> st
     output_snip = (tool_output or "")[:600]
     prompt = "工具名：" + tool_name + "\n输入：" + input_str[:400] + "\n输出片段：" + output_snip
     async with _haiku_sem:
-        client = _get_client()
         try:
-            response = await client.messages.create(
-                model="claude-sonnet-4-20250514",
-                system=(
-                    "你是一个摘要工具。你的唯一任务是输出一句不超过15字的中文概括。"
-                    "动词短语开头，写出目的而非动作本身，不要引号，不要描述结果，"
-                    "不要出现调用/执行。禁止回复对话、加emoji、说我理解/让我/好的。"
-                    "风格参考排查配置或确认端口。只输出摘要本身。"
-                ),
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-            )
-            caption = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    caption += block.text
-            caption = caption.strip()
-            for ch in ['"', "'", "\u201c", "\u201d", "\u3002", ".", "\uff0c", ","]:
+            payload = {
+                "model": "anthropic/claude-3-5-haiku-20241022",
+                "messages": [
+                    {"role": "system", "content": "你是一个中文摘要工具。输出一句不超过15字的中文概括。动词短语开头，写出目的而非动作本身。只输出摘要本身。"},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 50,
+            }
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
+                data = r.json()
+                caption = data["choices"][0]["message"]["content"].strip()
+            for ch in ["\"", "'", "\u201c", "\u201d", "\u3002", ".", "\uff0c", ","]:
                 caption = caption.strip(ch)
             return caption[:20] if caption else ""
         except Exception:
             logger = logging.getLogger(__name__)
             logger.exception("tool caption failed")
             return ""
-        finally:
-            await client.close()
-
