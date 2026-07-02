@@ -144,11 +144,18 @@ async def stream_chat(
     timing_callback: Callable[[str], None] | None = None,
     max_context_count: int | None = None,
 ) -> AsyncGenerator[dict, None]:
-    """Simplified: just send user message, no system prompt, no history."""
+    """Added back system prompt - now with system_prompt."""
     session_id_str = f"or-{uuid4().hex[:12]}"
+    
+    # Build system prompt
+    try:
+        system_prompt = await build_system_prompt(message, model)
+    except Exception:
+        system_prompt = "You are a helpful assistant."
+    
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": message}],
+        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": message}],
         "max_tokens": 4096,
     }
     try:
@@ -166,6 +173,7 @@ async def stream_chat(
         yield {"event": "done", "session_id": session_id_str}
     except Exception as e:
         raise RuntimeError(f"OpenRouter request failed: {e}")
+
 
 async def summarize_thinking(thinking: str) -> str:
     """Summarize thinking content via OpenRouter."""
