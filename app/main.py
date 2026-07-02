@@ -750,18 +750,26 @@ async def test_openrouter():
 
 @app.get("/api/test-chat")
 async def test_chat():
-    """Test the full stream_chat pipeline."""
-    from app.claude import stream_chat, available_models
-    import asyncio, json
-    
+    """Minimal test - just call OpenRouter directly, no system prompt."""
+    import httpx, os
     try:
-        model = available_models()[0]["id"]
-        events = []
-        async for event in stream_chat("Say hi in 3 words", "test-conv-123", model=model, max_context_count=5):
-            events.append(event)
-            if event.get("event") == "done":
-                break
-        return {"ok": True, "model": model, "events": events}
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        payload = {
+            "model": "anthropic/claude-sonnet-4.6",
+            "messages": [{"role": "user", "content": "Say hi in 3 words"}],
+            "max_tokens": 100,
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            )
+            return {
+                "status": resp.status_code,
+                "body_preview": resp.text[:300] if resp.text else "(empty)",
+                "ok": resp.status_code < 400
+            }
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:500]}"}
 
