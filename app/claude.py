@@ -138,58 +138,35 @@ async def stream_chat(
     message: str,
     conv_id: str,
     session_id: str | None = None,
-    model: str = "anthropic/claude-sonnet-4-20250514",
+    model: str = "anthropic/claude-sonnet-4.6",
     effort: str = "medium",
     extended: bool = True,
     timing_callback: Callable[[str], None] | None = None,
     max_context_count: int | None = None,
 ) -> AsyncGenerator[dict, None]:
-    model_config = next(
-        (item for item in available_models() if item["id"] == model),
-        None,
-    )
-    if model_config is None:
-        raise ValueError("unsupported model")
-
-    await get_registry().assert_available()
+    """Simplified: just send user message, no system prompt, no history."""
+    session_id_str = f"or-{uuid4().hex[:12]}"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": message}],
+        "max_tokens": 4096,
+    }
     try:
-        get_registry().set_busy(True)
-
-        system_prompt = await build_system_prompt(message, model)
-        history = _build_history(conv_id, limit=max_context_count)
-        if not history or history[-1].get("content") != message:
-            history.append({"role": "user", "content": message})
-
-        session_id_str = f"or-{uuid4().hex[:12]}"
-        payload = {
-            "model": model,
-            "messages": [{"role": "system", "content": system_prompt}] + history,
-            "stream": True,
-            "max_tokens": 8192,
-        }
-
-        headers = _get_headers()
-        if timing_callback:
-            timing_callback("sdk_first_event")
-
-        first_text = False
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
-                if resp.status_code >= 400:
-                    raise RuntimeError(f"OpenRouter API error ({resp.status_code}): {resp.text[:300]}")
-                body_text = resp.text
-                if not body_text.strip():
-                    raise RuntimeError(f"Empty body from OpenRouter (status {resp.status_code})")
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
+            if resp.status_code >= 400:
+                raise RuntimeError(f"OpenRouter status {resp.status_code}: {resp.text[:300]}")
+            try:
                 data = resp.json()
-                full_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if full_text:
-                    yield {"event": "delta", "text": full_text}
-                yield {"event": "done", "session_id": session_id_str}
-        except Exception as e:
-            raise RuntimeError(f"OpenRouter request failed: {e}")
-    finally:
-        get_registry().set_busy(False)
+            except Exception:
+                raise RuntimeError(f"JSON parse fail (status {resp.status_code}): {resp.text[:500]}")
+            full_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if full_text:
+                yield {"event": "delta", "text": full_text}
+        yield {"event": "done", "session_id": session_id_str}
+    except Exception as e:
+        raise RuntimeError(f"OpenRouter request failed: {e}")
+
 async def summarize_thinking(thinking: str) -> str:
     """Summarize thinking content via OpenRouter."""
     logger = logging.getLogger(__name__)
