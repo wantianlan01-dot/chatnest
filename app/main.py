@@ -747,6 +747,24 @@ async def test_openrouter():
     except Exception as e:
         return {"ok": False, "error": type(e).__name__ + ": " + str(e)[:300]}
 
+
+@app.get("/api/test-chat")
+async def test_chat():
+    """Test the full stream_chat pipeline."""
+    from app.claude import stream_chat, available_models
+    import asyncio, json
+    
+    try:
+        model = available_models()[0]["id"]
+        events = []
+        async for event in stream_chat("Say hi in 3 words", "test-conv-123", model=model, max_context_count=5):
+            events.append(event)
+            if event.get("event") == "done":
+                break
+        return {"ok": True, "model": model, "events": events}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:500]}"}
+
 @app.get("/api/splash")
 async def splash() -> dict:
     period = current_period()
