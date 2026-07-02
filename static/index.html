@@ -539,7 +539,7 @@ function _renderContextPage(root){
   const g=document.createElement("div");g.className="model-group";
   _CTX_OPTS.forEach(o=>{const b=document.createElement("button");b.className="model-group-item";
   const active=(state.max_context_count||null)===o.key;
-  b.innerHTML=\`<span class="model-info"><span class="model-name">\${o.label}</span><span class="model-desc">\${o.desc}</span></span>\${active?'<span class="model-check">✓</span>':''}\`;
+  b.innerHTML=`<span class="model-info"><span class="model-name">${o.label}</span><span class="model-desc">${o.desc}</span></span>${active?'<span class="model-check">✓</span>':''}`;
   b.onclick=()=>{state.max_context_count=o.key;localStorage.setItem("chat_context_count",o.key||"");_modelPage="main";renderModelSheet();updateModelHeader()};g.append(b)});
   root.append(g)
 }
