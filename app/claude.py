@@ -141,12 +141,12 @@ async def build_system_prompt(message: str, model: str) -> str:
     return system_prompt
 
 
-def _build_history(conv_id: str) -> list[dict]:
+def _build_history(conv_id: str, limit: int | None = None) -> list[dict]:
     """Reconstruct Anthropic API messages array from stored conversation."""
     from app.store import conversation_messages
 
     try:
-        rows, _, _ = conversation_messages(conv_id)
+        rows, _, _ = conversation_messages(conv_id, limit=limit)
     except Exception:
         return []
     messages: list[dict] = []
@@ -186,7 +186,7 @@ async def stream_chat(
 
         thinking_cfg, selected_effort = thinking_options(model_config, effort, extended)
         system_prompt = await build_system_prompt(message, model)
-        history = _build_history(conv_id)
+        history = _build_history(conv_id, limit=max_context_count)
         if not history or history[-1].get("content") != message:
             history.append({"role": "user", "content": message})
 

@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import base64
 import binascii
 import hmac
@@ -194,6 +194,7 @@ class ChatBody(BaseModel):
     effort: str = Field(default="medium", max_length=16)
     extended: bool = True
     attachments: list[str] = Field(default_factory=list, max_length=10)
+    max_context_count: int | None = Field(default=None, ge=1, le=50)
 
 
 class ToolCaptionBody(BaseModel):
@@ -442,7 +443,7 @@ async def chat(body: ChatBody) -> StreamingResponse:
                     f"{paths}\n]"
                 )
             chat_args = (prompt, conv_id, resume_id, body.model,
-                         body.effort, body.extended, log_timing)
+                         body.effort, body.extended, log_timing, body.max_context_count)
             if body.model == "codex":
                 chat_stream = stream_codex_chat(*chat_args)
                 first_chunk = await chat_stream.__anext__()
@@ -453,7 +454,7 @@ async def chat(body: ChatBody) -> StreamingResponse:
                 except (SessionResumeError, StopAsyncIteration):
                     logger.info("session resume failed for conv=%s, retrying without session", conv_id)
                     chat_args = (prompt, conv_id, None, body.model,
-                                 body.effort, body.extended, log_timing)
+                                 body.effort, body.extended, log_timing, body.max_context_count)
                     chat_stream = stream_chat(*chat_args)
                     first_chunk = await chat_stream.__anext__()
 

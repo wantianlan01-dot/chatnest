@@ -518,6 +518,7 @@ const _NAV_CHEVRON='<span class="model-nav-chevron"><svg viewBox="0 0 24 24" fil
 function _selectModel(id){state.model=id;localStorage.setItem('chat_model',id);renderModelSheet();updateModelHeader()}
 function renderModelSheet(){const root=$('modelContent');root.innerHTML='';const backBtn=$('closeModel');const titleEl=$('modelSheet').querySelector('.sheet-title');
   if(_modelPage==='effort'){backBtn.innerHTML=_BACK_SVG;backBtn.onclick=()=>{_modelPage='main';renderModelSheet()};titleEl.textContent='Effort';_renderEffortPage(root)}
+  else if(_modelPage==='context'){backBtn.innerHTML=_BACK_SVG;backBtn.onclick=()=>{_modelPage='main';renderModelSheet()};titleEl.textContent='Context';_renderContextPage(root)}
   else if(_modelPage==='more'){backBtn.innerHTML=_BACK_SVG;backBtn.onclick=()=>{_modelPage='main';renderModelSheet()};titleEl.textContent='More models';_renderMorePage(root)}
   else{backBtn.innerHTML='×';backBtn.onclick=()=>sheet('model',false);titleEl.textContent='Select model';_renderMainPage(root)}}
 function _renderMainPage(root){
@@ -532,6 +533,17 @@ function _renderEffortPage(root){const m=currentModel(),s=modelSetting(m);
     _EFFORT_OPTS.forEach(o=>{const b=document.createElement('button');b.className='model-group-item';const active=(s.effort||'medium')===o.key;b.innerHTML=`<span class="model-info"><span class="effort-option-name">${o.label}${o.def?'<span class="effort-option-badge">Default</span>':''}</span><span class="effort-option-desc">${o.desc}</span></span>${active?'<span class="model-check">✓</span>':''}`;b.onclick=()=>{const c=state.settings[m.id]||{};state.settings[m.id]={...c,effort:o.key};saveSettings();renderModelSheet();updateModelHeader()};g.append(b)});
     root.append(g);const note=document.createElement('div');note.className='effort-note';note.textContent='Higher effort means more thorough responses, but takes longer and uses your limits faster.';root.append(note)}
   if(m?.thinking==='adaptive'||m?.thinking==='extended'){const eg=document.createElement('div');eg.className='model-group';const row=document.createElement('div');row.className='extended-row';const isOn=s.extended!==false;row.innerHTML=`<span class="extended-info"><span class="extended-label">Extended</span><span class="extended-desc">Always uses deep reasoning</span></span>`;const tgl=document.createElement('button');tgl.className='toggle'+(isOn?' on':'');tgl.onclick=()=>{const c=state.settings[m.id]||{};state.settings[m.id]={...c,extended:!isOn};saveSettings();renderModelSheet();updateModelHeader()};row.append(tgl);eg.append(row);root.append(eg)}}
+
+const _CTX_OPTS=[{key:null,label:"All messages",desc:"Send full conversation history"},{key:5,label:"Last 5",desc:"Only the most recent 5 messages"},{key:10,label:"Last 10",desc:"Only the most recent 10 messages"},{key:20,label:"Last 20",desc:"Only the most recent 20 messages"}];
+function _renderContextPage(root){
+  const g=document.createElement("div");g.className="model-group";
+  _CTX_OPTS.forEach(o=>{const b=document.createElement("button");b.className="model-group-item";
+  const active=(state.max_context_count||null)===o.key;
+  b.innerHTML=\`<span class="model-info"><span class="model-name">\${o.label}</span><span class="model-desc">\${o.desc}</span></span>\${active?'<span class="model-check">✓</span>':''}\`;
+  b.onclick=()=>{state.max_context_count=o.key;localStorage.setItem("chat_context_count",o.key||"");_modelPage="main";renderModelSheet();updateModelHeader()};g.append(b)});
+  root.append(g)
+}
+
 function _renderMorePage(root){const g=document.createElement('div');g.className='model-group';
   state.models.filter(x=>!x.primary).forEach(m=>{const b=document.createElement('button');b.className='model-group-item';b.innerHTML=`<span class="model-name">${m.label}</span>${m.id===state.model?'<span class="model-check">✓</span>':''}`;b.onclick=()=>_selectModel(m.id);g.append(b)});
   root.append(g)}
@@ -1522,7 +1534,7 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[],op
     }
     if(runId!==_chatRunId)return;
     msg=beginClaude(text,attachments);_activeMsg=msg;const m=currentModel(),s=modelSetting(m);
-    const body={message:text,conversation_id:state.convId,session_id:state.legacySessionId,model:state.model,effort:s.effort||'medium',extended:s.extended!==false,attachments:branchMode?[]:attachments.map(item=>item.path)};
+    const body={message:text,conversation_id:state.convId,session_id:state.legacySessionId,model:state.model,max_context_count:state.max_context_count||null,effort:s.effort||'medium',extended:s.extended!==false,attachments:branchMode?[]:attachments.map(item=>item.path)};
     if(options.editMessageId)body.edit_message_id=options.editMessageId;
     if(options.retryMessageId)body.retry_message_id=options.retryMessageId;
     const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${state.token}`},body:JSON.stringify(body),signal:controller.signal});
