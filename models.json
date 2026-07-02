@@ -1,0 +1,8 @@
+[
+  { "id": "claude-sonnet-4-20250514",             "label": "Sonnet 4",      "desc": "Best balance of speed and capability", "thinking": "adaptive", "primary": true  },
+  { "id": "claude-3-5-haiku-20241022",             "label": "Haiku 3.5",     "desc": "Fastest for quick answers",            "thinking": "none",     "primary": true  },
+  { "id": "codex",                                 "label": "Codex",         "desc": "OpenAI coding agent",                   "thinking": "none",     "primary": true  },
+  { "id": "claude-3-5-sonnet-20241022",            "label": "Sonnet 3.5 v2", "desc": "Previous generation",                   "thinking": "none",     "primary": false },
+  { "id": "claude-3-haiku-20240307",               "label": "Haiku 3",       "desc": "Previous generation",                   "thinking": "none",     "primary": false },
+  { "id": "claude-3-opus-20240229",                "label": "Opus 3",        "desc": "Previous generation",                   "thinking": "none",     "primary": false }
+]
