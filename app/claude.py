@@ -172,32 +172,18 @@ async def stream_chat(
             timing_callback("sdk_first_event")
 
         first_text = False
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", OPENROUTER_URL, json=payload, headers=headers) as resp:
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(OPENROUTER_URL, json=payload, headers=_get_headers())
                 if resp.status_code >= 400:
-                    error_body = await resp.aread()
-                    detail = error_body.decode("utf-8", errors="replace")[:500]
-                    raise RuntimeError(f"OpenRouter API error ({resp.status_code}): {detail}")
-                if timing_callback:
-                    timing_callback("stream_started")
-                async for raw_line in resp.aiter_lines():
-                    if not raw_line.startswith("data: "):
-                        continue
-                    data_str = raw_line[6:].strip()
-                    if data_str == "[DONE]":
-                        yield {"event": "done", "session_id": session_id_str}
-                        return
-                    try:
-                        jd = json.loads(data_str)
-                        delta = jd.get("choices", [{}])[0].get("delta", {})
-                        if delta.get("content"):
-                            if not first_text:
-                                first_text = True
-                                if timing_callback:
-                                    timing_callback("first_text_token")
-                            yield {"event": "delta", "text": delta["content"]}
-                    except json.JSONDecodeError:
-                        pass
+                    raise RuntimeError(f"OpenRouter API error ({resp.status_code}): {resp.text[:300]}")
+                data = resp.json()
+                full_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if full_text:
+                    yield {"event": "delta", "text": full_text}
+                yield {"event": "done", "session_id": session_id_str}
+        except Exception as e:
+            raise RuntimeError(f"OpenRouter request failed: {e}")
     finally:
         get_registry().set_busy(False)
 async def summarize_thinking(thinking: str) -> str:
